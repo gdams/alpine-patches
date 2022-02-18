@@ -1,0 +1,1012 @@
+From c97ef6c9070298ab736ddafe5e00da1576f2c52a Mon Sep 17 00:00:00 2001
+From: Stephanie <scrater@microsoft.com>
+Date: Thu, 20 Jan 2022 17:38:30 -0800
+Subject: [PATCH] Revert "Revert "Backport support for Alpine musl" (#6)"
+
+This reverts commit 66889ea29e755ffb114a6b5ea9f8ad7008a0ec0d.
+---
+ common/autoconf/configure                     |  2 +-
+ common/autoconf/jdk-options.m4                |  2 +-
+ hotspot/make/linux/makefiles/defs.make        |  8 ++
+ hotspot/make/linux/makefiles/sa.make          |  4 +-
+ hotspot/make/linux/makefiles/saproc.make      |  3 +
+ hotspot/src/cpu/ppc/vm/macroAssembler_ppc.cpp | 22 ++++++
+ hotspot/src/os/linux/vm/jvm_linux.cpp         |  2 +
+ hotspot/src/os/linux/vm/os_linux.cpp          | 19 ++++-
+ hotspot/src/os/linux/vm/os_linux.inline.hpp   |  2 +-
+ .../linux_aarch64/vm/os_linux_aarch64.cpp     |  2 +-
+ .../src/os_cpu/linux_ppc/vm/os_linux_ppc.cpp  | 43 +++++++++++
+ .../os_cpu/linux_ppc/vm/thread_linux_ppc.cpp  | 13 ++++
+ .../src/os_cpu/linux_x86/vm/os_linux_x86.cpp  |  4 +-
+ .../linux_x86/vm/threadLS_linux_x86.hpp       |  2 +
+ hotspot/src/share/vm/utilities/bitMap.cpp     |  1 +
+ .../vm/utilities/globalDefinitions_gcc.hpp    |  2 +-
+ jdk/src/aix/native/java/net/aix_close.c       |  2 +-
+ .../aix/native/sun/nio/ch/AixNativeThread.c   |  2 +-
+ jdk/src/aix/native/sun/nio/ch/AixPollPort.c   |  2 +-
+ jdk/src/macosx/javavm/export/jvm_md.h         |  2 +-
+ .../native/com/sun/java/util/jar/pack/zip.cpp |  2 +
+ .../native/com/sun/java/util/jar/pack/zip.h   |  4 +-
+ .../native/sun/awt/medialib/mlib_types.h      |  1 +
+ jdk/src/solaris/bin/java_md_solinux.c         |  2 +
+ jdk/src/solaris/javavm/export/jvm_md.h        |  2 +-
+ .../solaris/native/java/lang/UNIXProcess_md.c |  8 ++
+ jdk/src/solaris/native/java/lang/childproc.c  | 76 ++++++++-----------
+ .../native/java/net/Inet4AddressImpl.c        |  2 +-
+ jdk/src/solaris/native/java/net/bsd_close.c   |  2 +-
+ jdk/src/solaris/native/java/net/linux_close.c |  7 +-
+ jdk/src/solaris/native/java/net/net_util_md.c | 12 +--
+ jdk/src/solaris/native/java/net/net_util_md.h |  2 +-
+ .../native/sun/nio/ch/DevPollArrayWrapper.c   |  2 +-
+ .../solaris/native/sun/nio/ch/NativeThread.c  |  4 +-
+ jdk/src/solaris/native/sun/nio/ch/Net.c       |  2 +-
+ .../native/sun/nio/fs/LinuxWatchService.c     |  2 +-
+ .../sun/tools/attach/LinuxVirtualMachine.c    |  4 +
+ jdk/src/solaris/native/sun/xawt/XToolkit.c    |  4 +-
+ jdk/src/solaris/transport/socket/socket_md.c  |  2 +-
+ 39 files changed, 198 insertions(+), 81 deletions(-)
+
+diff --git a/common/autoconf/configure b/common/autoconf/configure
+index b592c98524..8cb36985ed 100644
+--- a/common/autoconf/configure
++++ b/common/autoconf/configure
+@@ -103,7 +103,7 @@ check_hg_updates() {
+ }
+ 
+ # Check for local changes
+-check_hg_updates
++run_autogen_or_fail
+ 
+ if test -e $conf_custom_script_dir/generated-configure.sh; then
+   # Test if open configure is newer than custom configure, if so, custom needs to
+diff --git a/common/autoconf/jdk-options.m4 b/common/autoconf/jdk-options.m4
+index 42aeb7bd61..2244b08f62 100644
+--- a/common/autoconf/jdk-options.m4
++++ b/common/autoconf/jdk-options.m4
+@@ -151,7 +151,7 @@ AC_DEFUN_ONCE([JDKOPT_SETUP_JVM_VARIANTS],
+   AC_SUBST(JVM_VARIANT_ZEROSHARK)
+   AC_SUBST(JVM_VARIANT_CORE)
+ 
+-  INCLUDE_SA=true
++  AC_CHECK_HEADER(thread_db.h,INCLUDE_SA=true,INCLUDE_SA=false)
+   if test "x$JVM_VARIANT_ZERO" = xtrue ; then
+     INCLUDE_SA=false
+   fi
+diff --git a/hotspot/make/linux/makefiles/defs.make b/hotspot/make/linux/makefiles/defs.make
+index ec414639d2..5d05825300 100644
+--- a/hotspot/make/linux/makefiles/defs.make
++++ b/hotspot/make/linux/makefiles/defs.make
+@@ -305,6 +305,9 @@ endif
+ 
+ # Serviceability Binaries
+ # No SA Support for PPC, IA64, ARM or zero
++# or if thread_db.h missing (musl)
++
++ifneq ($(wildcard /usr/include/thread_db.h),)
+ ADD_SA_BINARIES/x86   = $(EXPORT_JRE_LIB_ARCH_DIR)/libsaproc.$(LIBRARY_SUFFIX) \
+                         $(EXPORT_LIB_DIR)/sa-jdi.jar
+ ADD_SA_BINARIES/sparc = $(EXPORT_JRE_LIB_ARCH_DIR)/libsaproc.$(LIBRARY_SUFFIX) \
+@@ -324,6 +327,11 @@ ifeq ($(ENABLE_FULL_DEBUG_SYMBOLS),1)
+     endif
+   endif
+ endif
++else
++ADD_SA_BINARIES/x86     =
++ADD_SA_BINARIES/sparc   =
++ADD_SA_BINARIES/aarch64 =
++endif
+ ADD_SA_BINARIES/ppc   =
+ ADD_SA_BINARIES/ia64  =
+ ADD_SA_BINARIES/arm   =
+diff --git a/hotspot/make/linux/makefiles/sa.make b/hotspot/make/linux/makefiles/sa.make
+index cdcb16a1a3..8d2f31e7cb 100644
+--- a/hotspot/make/linux/makefiles/sa.make
++++ b/hotspot/make/linux/makefiles/sa.make
+@@ -59,9 +59,11 @@ SA_PROPERTIES = $(SA_CLASSDIR)/sa.properties
+ 
+ # if $(AGENT_DIR) does not exist, we don't build SA
+ # also, we don't build SA on Itanium or zero.
++# check for thread_db.h too (musl does not have it).
+ 
+ all: 
+-	if [ -d $(AGENT_DIR) -a "$(SRCARCH)" != "ia64" \
++	if [ -d $(AGENT_DIR) -a -f /usr/include/thread_db.h \
++             -a "$(SRCARCH)" != "ia64" \
+              -a "$(SRCARCH)" != "zero" ] ; then \
+ 	   $(MAKE) -f sa.make $(GENERATED)/sa-jdi.jar; \
+ 	fi
+diff --git a/hotspot/make/linux/makefiles/saproc.make b/hotspot/make/linux/makefiles/saproc.make
+index ffc0ec5ce5..732c7614d6 100644
+--- a/hotspot/make/linux/makefiles/saproc.make
++++ b/hotspot/make/linux/makefiles/saproc.make
+@@ -66,12 +66,15 @@ endif
+ 
+ # if $(AGENT_DIR) does not exist, we don't build SA
+ # also, we don't build SA on Itanium or zero.
++# check for thread_db.h too (musl does not have it).
+ 
++ifneq ($(wildcard /usr/include/thread_db.h),)
+ ifneq ($(wildcard $(AGENT_DIR)),)
+ ifneq ($(filter-out ia64 zero,$(SRCARCH)),)
+   BUILDLIBSAPROC = $(LIBSAPROC)
+ endif
+ endif
++endif
+ 
+ ifneq ($(ALT_SASRCDIR),)
+ ALT_SAINCDIR=-I$(ALT_SASRCDIR) -DALT_SASRCDIR
+diff --git a/hotspot/src/cpu/ppc/vm/macroAssembler_ppc.cpp b/hotspot/src/cpu/ppc/vm/macroAssembler_ppc.cpp
+index f661847b66..c16af4c468 100644
+--- a/hotspot/src/cpu/ppc/vm/macroAssembler_ppc.cpp
++++ b/hotspot/src/cpu/ppc/vm/macroAssembler_ppc.cpp
+@@ -1243,7 +1243,11 @@ bool MacroAssembler::is_load_from_polling_page(int instruction, void* ucontext,
+   // the safepoing polling page.
+   ucontext_t* uc = (ucontext_t*) ucontext;
+   // Set polling address.
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+   address addr = (address)uc->uc_mcontext.regs->gpr[ra] + (ssize_t)ds;
++#else // Musl
++  address addr = (address)uc->uc_mcontext.gp_regs[ra] + (ssize_t)ds;
++#endif
+   if (polling_address_ptr != NULL) {
+     *polling_address_ptr = addr;
+   }
+@@ -1264,15 +1268,24 @@ bool MacroAssembler::is_memory_serialization(int instruction, JavaThread* thread
+     int rb = inv_rb_field(instruction);
+ 
+     // look up content of ra and rb in ucontext
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+     address ra_val=(address)uc->uc_mcontext.regs->gpr[ra];
+     long rb_val=(long)uc->uc_mcontext.regs->gpr[rb];
++#else // Musl
++    address ra_val=(address)uc->uc_mcontext.gp_regs[ra];
++    long rb_val=(long)uc->uc_mcontext.gp_regs[rb];
++#endif
+     return os::is_memory_serialize_page(thread, ra_val+rb_val);
+   } else if (is_stw(instruction) || is_stwu(instruction)) {
+     int ra = inv_ra_field(instruction);
+     int d1 = inv_d1_field(instruction);
+ 
+     // look up content of ra in ucontext
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+     address ra_val=(address)uc->uc_mcontext.regs->gpr[ra];
++#else // Musl
++    address ra_val=(address)uc->uc_mcontext.gp_regs[ra];
++#endif
+     return os::is_memory_serialize_page(thread, ra_val+d1);
+   } else {
+     return false;
+@@ -1335,11 +1348,20 @@ address MacroAssembler::get_stack_bang_address(int instruction, void *ucontext)
+       || (is_stdu(instruction) && rs == 1)) {
+     int ds = inv_ds_field(instruction);
+     // return banged address
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+     return ds+(address)uc->uc_mcontext.regs->gpr[ra];
++#else // Musl
++    return ds+(address)uc->uc_mcontext.gp_regs[ra];
++#endif
+   } else if (is_stdux(instruction) && rs == 1) {
+     int rb = inv_rb_field(instruction);
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+     address sp = (address)uc->uc_mcontext.regs->gpr[1];
+     long rb_val = (long)uc->uc_mcontext.regs->gpr[rb];
++#else // Musl
++    address sp = (address)uc->uc_mcontext.gp_regs[1];
++    long rb_val = (long)uc->uc_mcontext.gp_regs[rb];
++#endif
+     return ra != 1 || rb_val >= 0 ? NULL         // not a stack bang
+                                   : sp + rb_val; // banged address
+   }
+diff --git a/hotspot/src/os/linux/vm/jvm_linux.cpp b/hotspot/src/os/linux/vm/jvm_linux.cpp
+index ba84788a1b..c22281f7ca 100644
+--- a/hotspot/src/os/linux/vm/jvm_linux.cpp
++++ b/hotspot/src/os/linux/vm/jvm_linux.cpp
+@@ -154,7 +154,9 @@ struct siglabel siglabels[] = {
+ #ifdef SIGSTKFLT
+   "STKFLT",     SIGSTKFLT,      /* Stack fault.  */
+ #endif
++#ifdef SIGCLD
+   "CLD",        SIGCLD,         /* Same as SIGCHLD (System V).  */
++#endif
+   "CHLD",       SIGCHLD,        /* Child status has changed (POSIX).  */
+   "CONT",       SIGCONT,        /* Continue (POSIX).  */
+   "STOP",       SIGSTOP,        /* Stop, unblockable (POSIX).  */
+diff --git a/hotspot/src/os/linux/vm/os_linux.cpp b/hotspot/src/os/linux/vm/os_linux.cpp
+index 2d3880b363..2ea9df92cd 100644
+--- a/hotspot/src/os/linux/vm/os_linux.cpp
++++ b/hotspot/src/os/linux/vm/os_linux.cpp
+@@ -95,7 +95,6 @@
+ # include <string.h>
+ # include <syscall.h>
+ # include <sys/sysinfo.h>
+-# include <gnu/libc-version.h>
+ # include <sys/ipc.h>
+ # include <sys/shm.h>
+ # include <link.h>
+@@ -581,6 +580,13 @@ void os::Linux::hotspot_sigmask(Thread* thread) {
+ // detecting pthread library
+ 
+ void os::Linux::libpthread_init() {
++#if !(defined(__GLIBC__) || defined(__UCLIBC__))
++  // Hard code Alpine Linux supported musl compatible settings
++  os::Linux::set_glibc_version("glibc 2.9");
++  os::Linux::set_libpthread_version("NPTL");
++  os::Linux::set_is_NPTL();
++  os::Linux::set_is_floating_stack();
++#else
+   // Save glibc and pthread version strings. Note that _CS_GNU_LIBC_VERSION
+   // and _CS_GNU_LIBPTHREAD_VERSION are supported in glibc >= 2.3.2. Use a
+   // generic name for earlier versions.
+@@ -639,6 +645,7 @@ void os::Linux::libpthread_init() {
+   if (os::Linux::is_NPTL() || os::Linux::supports_variable_stack_size()) {
+      os::Linux::set_is_floating_stack();
+   }
++#endif
+ }
+ 
+ /////////////////////////////////////////////////////////////////////////////
+@@ -796,7 +803,7 @@ static void *java_start(Thread *thread) {
+   // processors with hyperthreading technology.
+   static int counter = 0;
+   int pid = os::current_process_id();
+-  alloca(((pid ^ counter++) & 7) * 128);
++  void *tmp = alloca(((pid ^ counter++) & 7) * 128);
+ 
+   ThreadLocalStorage::set_thread(thread);
+ 
+@@ -2974,6 +2981,11 @@ extern "C" JNIEXPORT void numa_warn(int number, char *where, ...) { }
+ extern "C" JNIEXPORT void numa_error(char *where) { }
+ extern "C" JNIEXPORT int fork1() { return fork(); }
+ 
++static void *dlvsym(void *handle, const char *name, const char *ver)
++{
++  return dlsym(handle, name);
++}
++
+ // Handle request to load libnuma symbol version 1.1 (API v1). If it fails
+ // load symbol from base version instead.
+ void* os::Linux::libnuma_dlsym(void* handle, const char *name) {
+@@ -4996,7 +5008,8 @@ void os::Linux::check_signal_handler(int sig) {
+   }
+ 
+   if (thisHandler != jvmHandler) {
+-    tty->print("Warning: %s handler ", exception_name(sig, buf, O_BUFLEN));
++    if(exception_name(sig, buf, O_BUFLEN))
++      tty->print("Warning: %s handler ", exception_name(sig, buf, O_BUFLEN));
+     tty->print("expected:%s", get_signal_handler_name(jvmHandler, buf, O_BUFLEN));
+     tty->print_cr("  found:%s", get_signal_handler_name(thisHandler, buf, O_BUFLEN));
+     // No need to check this sig any longer
+diff --git a/hotspot/src/os/linux/vm/os_linux.inline.hpp b/hotspot/src/os/linux/vm/os_linux.inline.hpp
+index a23bd56313..9d56de0ef0 100644
+--- a/hotspot/src/os/linux/vm/os_linux.inline.hpp
++++ b/hotspot/src/os/linux/vm/os_linux.inline.hpp
+@@ -33,7 +33,7 @@
+ 
+ #include <unistd.h>
+ #include <sys/socket.h>
+-#include <sys/poll.h>
++#include <poll.h>
+ #include <netdb.h>
+ 
+ inline void* os::thread_local_storage_at(int index) {
+diff --git a/hotspot/src/os_cpu/linux_aarch64/vm/os_linux_aarch64.cpp b/hotspot/src/os_cpu/linux_aarch64/vm/os_linux_aarch64.cpp
+index 82e36d27f8..d2ab1ce4fe 100644
+--- a/hotspot/src/os_cpu/linux_aarch64/vm/os_linux_aarch64.cpp
++++ b/hotspot/src/os_cpu/linux_aarch64/vm/os_linux_aarch64.cpp
+@@ -72,7 +72,7 @@
+ # include <pwd.h>
+ # include <poll.h>
+ # include <ucontext.h>
+-# include <fpu_control.h>
++# include <linux/types.h>  /* provides __u64 */
+ 
+ #define REG_FP 29
+ 
+diff --git a/hotspot/src/os_cpu/linux_ppc/vm/os_linux_ppc.cpp b/hotspot/src/os_cpu/linux_ppc/vm/os_linux_ppc.cpp
+index 33d6383883..a540a318b9 100644
+--- a/hotspot/src/os_cpu/linux_ppc/vm/os_linux_ppc.cpp
++++ b/hotspot/src/os_cpu/linux_ppc/vm/os_linux_ppc.cpp
+@@ -75,6 +75,10 @@
+ # include <poll.h>
+ # include <ucontext.h>
+ 
++#if ! (defined(__GLIBC__) || defined(__UCLIBC__))
++# include <asm/ptrace.h>
++#endif
++
+ 
+ address os::current_stack_pointer() {
+   intptr_t* csp;
+@@ -110,11 +114,19 @@ address os::Linux::ucontext_get_pc(ucontext_t * uc) {
+   //   it because the volatile registers are not needed to make setcontext() work.
+   //   Hopefully it was zero'd out beforehand.
+   guarantee(uc->uc_mcontext.regs != NULL, "only use ucontext_get_pc in sigaction context");
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+   return (address)uc->uc_mcontext.regs->nip;
++#else // Musl
++  return (address)uc->uc_mcontext.gp_regs[PT_NIP];
++#endif
+ }
+ 
+ intptr_t* os::Linux::ucontext_get_sp(ucontext_t * uc) {
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+   return (intptr_t*)uc->uc_mcontext.regs->gpr[1/*REG_SP*/];
++#else // Musl
++  return (intptr_t*)uc->uc_mcontext.gp_regs[1/*REG_SP*/];
++#endif
+ }
+ 
+ intptr_t* os::Linux::ucontext_get_fp(ucontext_t * uc) {
+@@ -213,7 +225,11 @@ JVM_handle_linux_signal(int sig,
+   if (uc) {
+     address const pc = os::Linux::ucontext_get_pc(uc);
+     if (pc && StubRoutines::is_safefetch_fault(pc)) {
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+       uc->uc_mcontext.regs->nip = (unsigned long)StubRoutines::continuation_for_safefetch_fault(pc);
++#else // Musl
++      uc->uc_mcontext.gp_regs[PT_NIP] = (unsigned long)StubRoutines::continuation_for_safefetch_fault(pc);
++#endif
+       return true;
+     }
+   }
+@@ -364,7 +380,11 @@ JVM_handle_linux_signal(int sig,
+           // continue at the next instruction after the faulting read. Returning
+           // garbage from this read is ok.
+           thread->set_pending_unsafe_access_error();
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+           uc->uc_mcontext.regs->nip = ((unsigned long)pc) + 4;
++#else // Musl
++          uc->uc_mcontext.gp_regs[PT_NIP] = ((unsigned long)pc) + 4;
++#endif
+           return true;
+         }
+       }
+@@ -383,7 +403,11 @@ JVM_handle_linux_signal(int sig,
+         // continue at the next instruction after the faulting read. Returning
+         // garbage from this read is ok.
+         thread->set_pending_unsafe_access_error();
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+         uc->uc_mcontext.regs->nip = ((unsigned long)pc) + 4;
++#else // Musl
++        uc->uc_mcontext.gp_regs[PT_NIP] = ((unsigned long)pc) + 4;
++#endif
+         return true;
+       }
+     }
+@@ -406,7 +430,11 @@ JVM_handle_linux_signal(int sig,
+   if (stub != NULL) {
+     // Save all thread context in case we need to restore it.
+     if (thread != NULL) thread->set_saved_exception_pc(pc);
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+     uc->uc_mcontext.regs->nip = (unsigned long)stub;
++#else
++    uc->uc_mcontext.gp_regs[PT_NIP] = (unsigned long)stub;
++#endif
+     return true;
+   }
+ 
+@@ -564,6 +592,7 @@ void os::print_context(outputStream *st, void *context) {
+   ucontext_t* uc = (ucontext_t*)context;
+ 
+   st->print_cr("Registers:");
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+   st->print("pc =" INTPTR_FORMAT "  ", uc->uc_mcontext.regs->nip);
+   st->print("lr =" INTPTR_FORMAT "  ", uc->uc_mcontext.regs->link);
+   st->print("ctr=" INTPTR_FORMAT "  ", uc->uc_mcontext.regs->ctr);
+@@ -572,6 +601,16 @@ void os::print_context(outputStream *st, void *context) {
+     st->print("r%-2d=" INTPTR_FORMAT "  ", i, uc->uc_mcontext.regs->gpr[i]);
+     if (i % 3 == 2) st->cr();
+   }
++#else // Musl
++  st->print("pc =" INTPTR_FORMAT "  ", uc->uc_mcontext.gp_regs[PT_NIP]);
++  st->print("lr =" INTPTR_FORMAT "  ", uc->uc_mcontext.gp_regs[PT_LNK]);
++  st->print("ctr=" INTPTR_FORMAT "  ", uc->uc_mcontext.gp_regs[PT_CTR]);
++  st->cr();
++  for (int i = 0; i < 32; i++) {
++    st->print("r%-2d=" INTPTR_FORMAT "  ", i, uc->uc_mcontext.gp_regs[i]);
++    if (i % 3 == 2) st->cr();
++  }
++#endif
+   st->cr();
+   st->cr();
+ 
+@@ -600,7 +639,11 @@ void os::print_register_info(outputStream *st, void *context) {
+   // this is only for the "general purpose" registers
+   for (int i = 0; i < 32; i++) {
+     st->print("r%-2d=", i);
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+     print_location(st, uc->uc_mcontext.regs->gpr[i]);
++#else // Musl
++    print_location(st, uc->uc_mcontext.gp_regs[i]);
++#endif
+   }
+   st->cr();
+ }
+diff --git a/hotspot/src/os_cpu/linux_ppc/vm/thread_linux_ppc.cpp b/hotspot/src/os_cpu/linux_ppc/vm/thread_linux_ppc.cpp
+index 802677f470..14787673fc 100644
+--- a/hotspot/src/os_cpu/linux_ppc/vm/thread_linux_ppc.cpp
++++ b/hotspot/src/os_cpu/linux_ppc/vm/thread_linux_ppc.cpp
+@@ -27,6 +27,10 @@
+ #include "runtime/frame.inline.hpp"
+ #include "runtime/thread.hpp"
+ 
++#if ! (defined(__GLIBC__) || defined(__UCLIBC__))
++#include <asm/ptrace.h>
++#endif
++
+ bool JavaThread::pd_get_top_frame_for_profiling(frame* fr_addr, void* ucontext, bool isInJava) {
+   assert(this->is_Java_thread(), "must be JavaThread");
+ 
+@@ -42,8 +46,13 @@ bool JavaThread::pd_get_top_frame_for_profiling(frame* fr_addr, void* ucontext,
+   // if we were running Java code when SIGPROF came in.
+   if (isInJava) {
+     ucontext_t* uc = (ucontext_t*) ucontext;
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+     frame ret_frame((intptr_t*)uc->uc_mcontext.regs->gpr[1/*REG_SP*/],
+                      (address)uc->uc_mcontext.regs->nip);
++#else // Musl
++    frame ret_frame((intptr_t*)uc->uc_mcontext.gp_regs[1/*REG_SP*/],
++                     (address)uc->uc_mcontext.gp_regs[PT_NIP]);
++#endif
+ 
+     if (ret_frame.pc() == NULL) {
+       // ucontext wasn't useful
+@@ -56,7 +65,11 @@ bool JavaThread::pd_get_top_frame_for_profiling(frame* fr_addr, void* ucontext,
+       if (m == NULL || !m->is_valid_method()) return false;
+       if (!Metaspace::contains((const void*)m)) return false;
+ 
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+       uint64_t reg_bcp = uc->uc_mcontext.regs->gpr[14/*R14_bcp*/];
++#else // Musl
++       uint64_t reg_bcp = uc->uc_mcontext.gp_regs[14/*R14_bcp*/];
++#endif
+       uint64_t istate_bcp = istate->bcp;
+       uint64_t code_start = (uint64_t)(m->code_base());
+       uint64_t code_end = (uint64_t)(m->code_base() + m->code_size());
+diff --git a/hotspot/src/os_cpu/linux_x86/vm/os_linux_x86.cpp b/hotspot/src/os_cpu/linux_x86/vm/os_linux_x86.cpp
+index 65c3165ca1..c26e07c813 100644
+--- a/hotspot/src/os_cpu/linux_x86/vm/os_linux_x86.cpp
++++ b/hotspot/src/os_cpu/linux_x86/vm/os_linux_x86.cpp
+@@ -72,7 +72,6 @@
+ # include <pwd.h>
+ # include <poll.h>
+ # include <ucontext.h>
+-# include <fpu_control.h>
+ 
+ #ifdef AMD64
+ #define REG_SP REG_RSP
+@@ -544,6 +543,9 @@ JVM_handle_linux_signal(int sig,
+   return true; // Mute compiler
+ }
+ 
++#define _FPU_GETCW(cw) __asm__ __volatile__ ("fnstcw %0" : "=m" (*&cw))
++#define _FPU_SETCW(cw) __asm__ __volatile__ ("fldcw %0" : : "m" (*&cw))
++
+ void os::Linux::init_thread_fpu_state(void) {
+ #ifndef AMD64
+   // set fpu to 53 bit precision
+diff --git a/hotspot/src/os_cpu/linux_x86/vm/threadLS_linux_x86.hpp b/hotspot/src/os_cpu/linux_x86/vm/threadLS_linux_x86.hpp
+index f3f2f26f88..6b50cfa2b0 100644
+--- a/hotspot/src/os_cpu/linux_x86/vm/threadLS_linux_x86.hpp
++++ b/hotspot/src/os_cpu/linux_x86/vm/threadLS_linux_x86.hpp
+@@ -32,7 +32,9 @@
+   // map stack pointer to thread pointer - see notes in threadLS_linux_x86.cpp
+   #define SP_BITLENGTH  32
+   #define PAGE_SHIFT    12
++  #ifndef PAGE_SIZE
+   #define PAGE_SIZE     (1UL << PAGE_SHIFT)
++  #endif
+   static Thread* _sp_map[1UL << (SP_BITLENGTH - PAGE_SHIFT)];
+ 
+ public:
+diff --git a/hotspot/src/share/vm/utilities/bitMap.cpp b/hotspot/src/share/vm/utilities/bitMap.cpp
+index e64add155d..87e62c76d1 100644
+--- a/hotspot/src/share/vm/utilities/bitMap.cpp
++++ b/hotspot/src/share/vm/utilities/bitMap.cpp
+@@ -42,6 +42,7 @@
+ # include "os_bsd.inline.hpp"
+ #endif
+ 
++template class ArrayAllocator<BitMap::bm_word_t, mtInternal>;
+ 
+ BitMap::BitMap(bm_word_t* map, idx_t size_in_bits) :
+   _map(map), _size(size_in_bits), _map_allocator(false)
+diff --git a/hotspot/src/share/vm/utilities/globalDefinitions_gcc.hpp b/hotspot/src/share/vm/utilities/globalDefinitions_gcc.hpp
+index 5760eb2fab..be1e4dbce0 100644
+--- a/hotspot/src/share/vm/utilities/globalDefinitions_gcc.hpp
++++ b/hotspot/src/share/vm/utilities/globalDefinitions_gcc.hpp
+@@ -235,7 +235,7 @@ inline int g_isnan(double f) { return isnand(f); }
+ #elif defined(__APPLE__)
+ inline int g_isnan(double f) { return isnan(f); }
+ #elif defined(LINUX) || defined(_ALLBSD_SOURCE)
+-inline int g_isnan(float  f) { return isnanf(f); }
++inline int g_isnan(float  f) { return isnan(f); }
+ inline int g_isnan(double f) { return isnan(f); }
+ #else
+ #error "missing platform-specific definition here"
+diff --git a/jdk/src/aix/native/java/net/aix_close.c b/jdk/src/aix/native/java/net/aix_close.c
+index 90d57b42f0..fbeb73efa4 100644
+--- a/jdk/src/aix/native/java/net/aix_close.c
++++ b/jdk/src/aix/native/java/net/aix_close.c
+@@ -54,7 +54,7 @@
+ #include <unistd.h>
+ #include <errno.h>
+ 
+-#include <sys/poll.h>
++#include <poll.h>
+ 
+ /*
+  * Stack allocated by thread when doing blocking operation
+diff --git a/jdk/src/aix/native/sun/nio/ch/AixNativeThread.c b/jdk/src/aix/native/sun/nio/ch/AixNativeThread.c
+index c0d5857962..c4abb7ae5d 100644
+--- a/jdk/src/aix/native/sun/nio/ch/AixNativeThread.c
++++ b/jdk/src/aix/native/sun/nio/ch/AixNativeThread.c
+@@ -32,7 +32,7 @@
+ #include "sun_nio_ch_NativeThread.h"
+ 
+ #include <pthread.h>
+-#include <sys/signal.h>
++#include <signal.h>
+ 
+ /* Also defined in src/aix/native/java/net/aix_close.c */
+ #define INTERRUPT_SIGNAL (SIGRTMAX - 1)
+diff --git a/jdk/src/aix/native/sun/nio/ch/AixPollPort.c b/jdk/src/aix/native/sun/nio/ch/AixPollPort.c
+index 70064b890e..c10c602b6b 100644
+--- a/jdk/src/aix/native/sun/nio/ch/AixPollPort.c
++++ b/jdk/src/aix/native/sun/nio/ch/AixPollPort.c
+@@ -34,7 +34,7 @@
+ #include <unistd.h>
+ #include <sys/types.h>
+ #include <sys/socket.h>
+-#include <sys/poll.h>
++#include <poll.h>
+ #include <sys/pollset.h>
+ #include <fcntl.h>
+ #include <stddef.h>
+diff --git a/jdk/src/macosx/javavm/export/jvm_md.h b/jdk/src/macosx/javavm/export/jvm_md.h
+index 012bb1babe..0b57576833 100644
+--- a/jdk/src/macosx/javavm/export/jvm_md.h
++++ b/jdk/src/macosx/javavm/export/jvm_md.h
+@@ -60,7 +60,7 @@
+ #include <sys/stat.h>
+ #include <fcntl.h>
+ #include <errno.h>
+-#include <sys/signal.h>
++#include <signal.h>
+ 
+ /* O Flags */
+ 
+diff --git a/jdk/src/share/native/com/sun/java/util/jar/pack/zip.cpp b/jdk/src/share/native/com/sun/java/util/jar/pack/zip.cpp
+index f58c94956c..cd681b2105 100644
+--- a/jdk/src/share/native/com/sun/java/util/jar/pack/zip.cpp
++++ b/jdk/src/share/native/com/sun/java/util/jar/pack/zip.cpp
+@@ -46,6 +46,8 @@
+ 
+ #include "zip.h"
+ 
++#define uchar unsigned char
++
+ #ifdef NO_ZLIB
+ 
+ inline bool jar::deflate_bytes(bytes& head, bytes& tail) {
+diff --git a/jdk/src/share/native/com/sun/java/util/jar/pack/zip.h b/jdk/src/share/native/com/sun/java/util/jar/pack/zip.h
+index 14ffc9d65b..70eb43f4cc 100644
+--- a/jdk/src/share/native/com/sun/java/util/jar/pack/zip.h
++++ b/jdk/src/share/native/com/sun/java/util/jar/pack/zip.h
+@@ -23,9 +23,7 @@
+  * questions.
+  */
+ 
+-#define ushort unsigned short
+-#define uint   unsigned int
+-#define uchar  unsigned char
++#include <sys/types.h>
+ 
+ struct unpacker;
+ 
+diff --git a/jdk/src/share/native/sun/awt/medialib/mlib_types.h b/jdk/src/share/native/sun/awt/medialib/mlib_types.h
+index aba0394ffd..703442b78d 100644
+--- a/jdk/src/share/native/sun/awt/medialib/mlib_types.h
++++ b/jdk/src/share/native/sun/awt/medialib/mlib_types.h
+@@ -27,6 +27,7 @@
+ #ifndef MLIB_TYPES_H
+ #define MLIB_TYPES_H
+ 
++#include <stddef.h>			/* for NULL */
+ #include <limits.h>
+ #if defined(_MSC_VER)
+ #include <float.h>                      /* for FLT_MAX and DBL_MAX */
+diff --git a/jdk/src/solaris/bin/java_md_solinux.c b/jdk/src/solaris/bin/java_md_solinux.c
+index a96713757d..b36962c27c 100644
+--- a/jdk/src/solaris/bin/java_md_solinux.c
++++ b/jdk/src/solaris/bin/java_md_solinux.c
+@@ -292,6 +292,8 @@ RequiresSetenv(int wanted, const char *jvmpath) {
+     char *dmllp = NULL;
+     char *p; /* a utility pointer */
+ 
++    return JNI_TRUE;
++
+ #ifdef AIX
+     /* We always have to set the LIBPATH on AIX because ld doesn't support $ORIGIN. */
+     return JNI_TRUE;
+diff --git a/jdk/src/solaris/javavm/export/jvm_md.h b/jdk/src/solaris/javavm/export/jvm_md.h
+index 5c681914bb..62415ee255 100644
+--- a/jdk/src/solaris/javavm/export/jvm_md.h
++++ b/jdk/src/solaris/javavm/export/jvm_md.h
+@@ -65,7 +65,7 @@
+ #include <sys/stat.h>
+ #include <fcntl.h>
+ #include <errno.h>
+-#include <sys/signal.h>
++#include <signal.h>
+ 
+ /* O Flags */
+ 
+diff --git a/jdk/src/solaris/native/java/lang/UNIXProcess_md.c b/jdk/src/solaris/native/java/lang/UNIXProcess_md.c
+index 9b510ad3a9..7922b28c71 100644
+--- a/jdk/src/solaris/native/java/lang/UNIXProcess_md.c
++++ b/jdk/src/solaris/native/java/lang/UNIXProcess_md.c
+@@ -550,7 +550,11 @@ static pid_t
+ startChild(JNIEnv *env, jobject process, ChildStuff *c, const char *helperpath) {
+     switch (c->mode) {
+       case MODE_VFORK:
++// use regular fork when running on musl
++// this should fix deadlocks on aarch64
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+         return vforkChild(c);
++#endif	      
+       case MODE_FORK:
+         return forkChild(c);
+ #if defined(__solaris__) || defined(_ALLBSD_SOURCE) || defined(_AIX)
+@@ -649,8 +653,12 @@ Java_java_lang_UNIXProcess_forkAndExec(JNIEnv *env,
+     if (resultPid < 0) {
+         switch (c->mode) {
+           case MODE_VFORK:
++// use regular fork when running on musl
++// this should fix deadlocks on aarch64
++#if defined(__GLIBC__) || defined(__UCLIBC__)
+             throwIOException(env, errno, "vfork failed");
+             break;
++#endif
+           case MODE_FORK:
+             throwIOException(env, errno, "fork failed");
+             break;
+diff --git a/jdk/src/solaris/native/java/lang/childproc.c b/jdk/src/solaris/native/java/lang/childproc.c
+index c0045d5371..d416f49250 100644
+--- a/jdk/src/solaris/native/java/lang/childproc.c
++++ b/jdk/src/solaris/native/java/lang/childproc.c
+@@ -23,13 +23,13 @@
+  * questions.
+  */
+ 
+-#include <dirent.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ #include <limits.h>
++#include <poll.h>
+ 
+ #include "childproc.h"
+ 
+@@ -57,61 +57,47 @@ closeSafely(int fd)
+     return (fd == -1) ? 0 : close(fd);
+ }
+ 
+-int
+-isAsciiDigit(char c)
+-{
+-  return c >= '0' && c <= '9';
+-}
+-
+-#ifdef _ALLBSD_SOURCE
+-#define FD_DIR "/dev/fd"
+-#define dirent64 dirent
+-#define readdir64 readdir
+-#elif defined(_AIX)
+-/* AIX does not understand '/proc/self' - it requires the real process ID */
+-#define FD_DIR aix_fd_dir
+-#else
+-#define FD_DIR "/proc/self/fd"
+-#endif
+-
+ int
+ closeDescriptors(void)
+ {
+-    DIR *dp;
+-    struct dirent64 *dirp;
+     int from_fd = FAIL_FILENO + 1;
++    struct pollfd pfds[1024];
++    int i, total, nclosed = 0;
++    int max_fd = sysconf(_SC_OPEN_MAX);
+ 
+-    /* We're trying to close all file descriptors, but opendir() might
+-     * itself be implemented using a file descriptor, and we certainly
+-     * don't want to close that while it's in use.  We assume that if
+-     * opendir() is implemented using a file descriptor, then it uses
+-     * the lowest numbered file descriptor, just like open().  So we
+-     * close a couple explicitly.  */
++    if (max_fd < 0)
++        return 0;
+ 
+-    close(from_fd);          /* for possible use by opendir() */
+-    close(from_fd + 1);      /* another one for good luck */
++    /* init events */
++    total = max_fd - from_fd;
++    for (i = 0; i < (total < 1024 ? total : 1024); i++) {
++        pfds[i].events = 0;
++    }
+ 
+-#if defined(_AIX)
+-    /* AIX does not understand '/proc/self' - it requires the real process ID */
+-    char aix_fd_dir[32];     /* the pid has at most 19 digits */
+-    snprintf(aix_fd_dir, 32, "/proc/%d/fd", getpid());
+-#endif
++    while (from_fd < max_fd) {
++        int nfds, r = 0;
+ 
+-    if ((dp = opendir(FD_DIR)) == NULL)
+-        return 0;
++        total = max_fd - from_fd;
++        nfds =  total < 1024 ? total : 1024;
+ 
+-    /* We use readdir64 instead of readdir to work around Solaris bug
+-     * 6395699: /proc/self/fd fails to report file descriptors >= 1024 on Solaris 9
+-     */
+-    while ((dirp = readdir64(dp)) != NULL) {
+-        int fd;
+-        if (isAsciiDigit(dirp->d_name[0]) &&
+-            (fd = strtol(dirp->d_name, NULL, 10)) >= from_fd + 2)
+-            close(fd);
+-    }
++        for (i = 0; i < nfds; i++)
++            pfds[i].fd = from_fd + i;
+ 
+-    closedir(dp);
++        do {
++            r = poll(pfds, nfds, 0);
++        } while (r == -1 && errno == EINTR);
+ 
++        if (r < 0)
++            return 0;
++
++
++        for (i = 0; i < nfds; i++)
++            if (pfds[i].revents != POLLNVAL) {
++                nclosed++;
++                close(pfds[i].fd);
++            }
++        from_fd += nfds;
++    }
+     return 1;
+ }
+ 
+diff --git a/jdk/src/solaris/native/java/net/Inet4AddressImpl.c b/jdk/src/solaris/native/java/net/Inet4AddressImpl.c
+index 7e193a9319..dba1fa689e 100644
+--- a/jdk/src/solaris/native/java/net/Inet4AddressImpl.c
++++ b/jdk/src/solaris/native/java/net/Inet4AddressImpl.c
+@@ -47,7 +47,7 @@
+ 
+ #include "java_net_Inet4AddressImpl.h"
+ 
+-#if defined(__GLIBC__) || (defined(__FreeBSD__) && (__FreeBSD_version >= 601104))
++#if defined(__linux__) || (defined(__FreeBSD__) && (__FreeBSD_version >= 601104))
+ #define HAS_GLIBC_GETHOSTBY_R   1
+ #endif
+ 
+diff --git a/jdk/src/solaris/native/java/net/bsd_close.c b/jdk/src/solaris/native/java/net/bsd_close.c
+index 89a20707c4..511ab845a8 100644
+--- a/jdk/src/solaris/native/java/net/bsd_close.c
++++ b/jdk/src/solaris/native/java/net/bsd_close.c
+@@ -38,7 +38,7 @@
+ #include <sys/uio.h>
+ #include <unistd.h>
+ #include <errno.h>
+-#include <sys/poll.h>
++#include <poll.h>
+ 
+ /*
+  * Stack allocated by thread when doing blocking operation
+diff --git a/jdk/src/solaris/native/java/net/linux_close.c b/jdk/src/solaris/native/java/net/linux_close.c
+index eacc2afd15..711ab103f7 100644
+--- a/jdk/src/solaris/native/java/net/linux_close.c
++++ b/jdk/src/solaris/native/java/net/linux_close.c
+@@ -36,7 +36,7 @@
+ #include <sys/uio.h>
+ #include <unistd.h>
+ #include <errno.h>
+-#include <sys/poll.h>
++#include <poll.h>
+ 
+ /*
+  * Stack allocated by thread when doing blocking operation
+@@ -58,7 +58,7 @@ typedef struct {
+ /*
+  * Signal to unblock thread
+  */
+-static int sigWakeup = (__SIGRTMAX - 2);
++static int sigWakeup;
+ 
+ /*
+  * fdTable holds one entry per file descriptor, up to a certain
+@@ -147,6 +147,9 @@ static void __attribute((constructor)) init() {
+     /*
+      * Setup the signal handler
+      */
++#ifndef __AIX
++    sigWakeup = SIGRTMAX - 2;
++#endif
+     sa.sa_handler = sig_wakeup;
+     sa.sa_flags   = 0;
+     sigemptyset(&sa.sa_mask);
+diff --git a/jdk/src/solaris/native/java/net/net_util_md.c b/jdk/src/solaris/native/java/net/net_util_md.c
+index bd0bd8c2c9..260fc99129 100644
+--- a/jdk/src/solaris/native/java/net/net_util_md.c
++++ b/jdk/src/solaris/native/java/net/net_util_md.c
+@@ -662,7 +662,7 @@ struct localinterface {
+ 
+ static struct localinterface *localifs = 0;
+ static int localifsSize = 0;    /* size of array */
+-static int nifs = 0;            /* number of entries used in array */
++static int nifs = -1;            /* number of entries used in array */
+ 
+ /* not thread safe: make sure called once from one thread */
+ 
+@@ -674,6 +674,10 @@ static void initLocalIfs () {
+     int index, x1, x2, x3;
+     unsigned int u0,u1,u2,u3,u4,u5,u6,u7,u8,u9,ua,ub,uc,ud,ue,uf;
+ 
++    if (nifs >= 0)
++	return ;
++    nifs = 0;
++
+     if ((f = fopen("/proc/net/if_inet6", "r")) == NULL) {
+         return ;
+     }
+@@ -702,7 +706,7 @@ static void initLocalIfs () {
+             localifs = (struct localinterface *) realloc (
+                         localifs, sizeof (struct localinterface)* (localifsSize+5));
+             if (localifs == 0) {
+-                nifs = 0;
++                nifs = -1;
+                 fclose (f);
+                 return;
+             }
+@@ -725,9 +729,7 @@ static void initLocalIfs () {
+ static int getLocalScopeID (char *addr) {
+     struct localinterface *lif;
+     int i;
+-    if (localifs == 0) {
+-        initLocalIfs();
+-    }
++    initLocalIfs();
+     for (i=0, lif=localifs; i<nifs; i++, lif++) {
+         if (memcmp (addr, lif->localaddr, 16) == 0) {
+             return lif->index;
+diff --git a/jdk/src/solaris/native/java/net/net_util_md.h b/jdk/src/solaris/native/java/net/net_util_md.h
+index a48446de9c..8915b68aae 100644
+--- a/jdk/src/solaris/native/java/net/net_util_md.h
++++ b/jdk/src/solaris/native/java/net/net_util_md.h
+@@ -33,7 +33,7 @@
+ #include <unistd.h>
+ 
+ #ifndef USE_SELECT
+-#include <sys/poll.h>
++#include <poll.h>
+ #endif
+ 
+ 
+diff --git a/jdk/src/solaris/native/sun/nio/ch/DevPollArrayWrapper.c b/jdk/src/solaris/native/sun/nio/ch/DevPollArrayWrapper.c
+index 6860a167bb..20849dabcf 100644
+--- a/jdk/src/solaris/native/sun/nio/ch/DevPollArrayWrapper.c
++++ b/jdk/src/solaris/native/sun/nio/ch/DevPollArrayWrapper.c
+@@ -28,7 +28,7 @@
+ #include "jvm.h"
+ #include "jlong.h"
+ #include "sun_nio_ch_DevPollArrayWrapper.h"
+-#include <sys/poll.h>
++#include <poll.h>
+ #include <unistd.h>
+ #include <sys/time.h>
+ 
+diff --git a/jdk/src/solaris/native/sun/nio/ch/NativeThread.c b/jdk/src/solaris/native/sun/nio/ch/NativeThread.c
+index 5e2a78b7af..f5483bbdbd 100644
+--- a/jdk/src/solaris/native/sun/nio/ch/NativeThread.c
++++ b/jdk/src/solaris/native/sun/nio/ch/NativeThread.c
+@@ -34,9 +34,9 @@
+ 
+ #ifdef __linux__
+   #include <pthread.h>
+-  #include <sys/signal.h>
++  #include <signal.h>
+   /* Also defined in net/linux_close.c */
+-  #define INTERRUPT_SIGNAL (__SIGRTMAX - 2)
++  #define INTERRUPT_SIGNAL (SIGRTMAX - 2)
+ #elif __solaris__
+   #include <thread.h>
+   #include <signal.h>
+diff --git a/jdk/src/solaris/native/sun/nio/ch/Net.c b/jdk/src/solaris/native/sun/nio/ch/Net.c
+index fcb6197c1d..b497facded 100644
+--- a/jdk/src/solaris/native/sun/nio/ch/Net.c
++++ b/jdk/src/solaris/native/sun/nio/ch/Net.c
+@@ -23,7 +23,7 @@
+  * questions.
+  */
+ 
+-#include <sys/poll.h>
++#include <poll.h>
+ #include <sys/types.h>
+ #include <sys/socket.h>
+ #include <string.h>
+diff --git a/jdk/src/solaris/native/sun/nio/fs/LinuxWatchService.c b/jdk/src/solaris/native/sun/nio/fs/LinuxWatchService.c
+index 375aaa4850..7606e9ba82 100644
+--- a/jdk/src/solaris/native/sun/nio/fs/LinuxWatchService.c
++++ b/jdk/src/solaris/native/sun/nio/fs/LinuxWatchService.c
+@@ -32,7 +32,7 @@
+ #include <dlfcn.h>
+ #include <sys/types.h>
+ #include <sys/socket.h>
+-#include <sys/poll.h>
++#include <poll.h>
+ #include <sys/inotify.h>
+ 
+ #include "sun_nio_fs_LinuxWatchService.h"
+diff --git a/jdk/src/solaris/native/sun/tools/attach/LinuxVirtualMachine.c b/jdk/src/solaris/native/sun/tools/attach/LinuxVirtualMachine.c
+index 6017308d0b..a583b4bae8 100644
+--- a/jdk/src/solaris/native/sun/tools/attach/LinuxVirtualMachine.c
++++ b/jdk/src/solaris/native/sun/tools/attach/LinuxVirtualMachine.c
+@@ -195,6 +195,9 @@ JNIEXPORT void JNICALL Java_sun_tools_attach_LinuxVirtualMachine_connect
+ JNIEXPORT jboolean JNICALL Java_sun_tools_attach_LinuxVirtualMachine_isLinuxThreads
+   (JNIEnv *env, jclass cls)
+ {
++# ifdef MUSL_LIBC
++   return JNI_FALSE;
++# else
+ # ifndef _CS_GNU_LIBPTHREAD_VERSION
+ # define _CS_GNU_LIBPTHREAD_VERSION 3
+ # endif
+@@ -222,6 +225,7 @@ JNIEXPORT jboolean JNICALL Java_sun_tools_attach_LinuxVirtualMachine_isLinuxThre
+     res = (jboolean)(strstr(s, "NPTL") == NULL);
+     free(s);
+     return res;
++# endif
+ }
+ 
+ /*
+diff --git a/jdk/src/solaris/native/sun/xawt/XToolkit.c b/jdk/src/solaris/native/sun/xawt/XToolkit.c
+index 24557cba41..8470cc1ea2 100644
+--- a/jdk/src/solaris/native/sun/xawt/XToolkit.c
++++ b/jdk/src/solaris/native/sun/xawt/XToolkit.c
+@@ -27,7 +27,7 @@
+ #include <X11/Xutil.h>
+ #include <X11/Xos.h>
+ #include <X11/Xatom.h>
+-#ifdef __linux__
++#if defined(__linux__) && defined(__GLIBC__) && ! defined(__UCLIBC__)
+ #include <execinfo.h>
+ #endif
+ 
+@@ -796,7 +796,7 @@ JNIEXPORT jstring JNICALL Java_sun_awt_X11_XToolkit_getEnv
+     return ret;
+ }
+ 
+-#ifdef __linux__
++#if defined(__linux__) && defined(__GLIBC__) && ! defined(__UCLIBC__)
+ void print_stack(void)
+ {
+   void *array[10];
+diff --git a/jdk/src/solaris/transport/socket/socket_md.c b/jdk/src/solaris/transport/socket/socket_md.c
+index 33e062e087..819fcabdb8 100644
+--- a/jdk/src/solaris/transport/socket/socket_md.c
++++ b/jdk/src/solaris/transport/socket/socket_md.c
+@@ -37,7 +37,7 @@
+ #include <thread.h>
+ #else
+ #include <pthread.h>
+-#include <sys/poll.h>
++#include <poll.h>
+ #endif
+ 
+ #include "socket_md.h"
+Sign in now to use ZenHub
